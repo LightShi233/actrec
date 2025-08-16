@@ -60,8 +60,8 @@ jobs:
         export USE_CCACHE=1
         ccache -M 5G
         source build/envsetup.sh
-        lunch pb_cannon-userdebug
-        mka pbrp -j$(nproc)
+        lunch lineage_cannon-userdebug
+        mka recoveryimage -j$(nproc)
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
