@@ -34,7 +34,7 @@ jobs:
     - name: repo init
       run: |
         repo init -u https://github.com/PitchBlackRecoveryProject/manifest_pb \
-                  -b android-13.0 --depth=1
+                  -b android-14.0 --depth=1
 
     - name: repo sync
       run: |
