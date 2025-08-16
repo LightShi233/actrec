@@ -42,12 +42,12 @@ jobs:
         cat > .repo/local_manifests/cannon.xml <<EOF
         <manifest>
           <project name="xiaomi-mt6853-devs/android_device_xiaomi_cannon"
-                   path="device/xiaomi/cannon"
+                   path="device/lineage"
                    remote="github"
                    revision="lineage-20"
                    clone-depth="1" />
           <project name="xiaomi-mt6853-devs/android_vendor_xiaomi_cannon"
-                   path="vendor/xiaomi/cannon"
+                   path="vendor/lineage"
                    remote="github"
                    revision="lineage-20"
                    clone-depth="1" />
