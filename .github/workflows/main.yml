@@ -1,0 +1,46 @@
+name: Long-CI-Tailscale-SSH-4h
+
+on:
+  workflow_dispatch:
+
+env:
+  # 把 Tailscale auth key 存进仓库 Secrets -> TS_AUTHKEY
+  TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+  # 节点在 Tailscale 中的名字，可自定义
+  TS_HOSTNAME: ci-${{ github.run_id }}
+
+jobs:
+  long-job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 250   # 稍大于 4 h，防止超时
+
+    steps:
+      # 1. 安装并登录 Tailscale，同时启用 Tailscale SSH
+      - name: Tailscale up
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ env.TS_AUTHKEY }}
+          args: --ssh --hostname=${{ env.TS_HOSTNAME }}
+
+      # 2. 开始 4 小时任务
+      - name: Run 4-hour payload
+        run: |
+          set -e
+          echo "=== 4-hour job started at $(date) ==="
+
+          # 这里放你的实际业务逻辑
+          mkdir -p ~/artifact
+          for i in $(seq 1 240); do
+            echo "[$(date)] step $i" >> ~/artifact/log.txt
+            sleep 60
+          done
+
+          echo "=== 4-hour job finished at $(date) ==="
+
+      # 3. 上传 ~/artifact 目录
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-${{ github.run_id }}
+          path: ~/artifact
+          retention-days: 7
