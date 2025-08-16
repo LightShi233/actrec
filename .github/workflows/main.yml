@@ -47,7 +47,7 @@ jobs:
                    revision="lineage-20"
                    clone-depth="1" />
           <project name="xiaomi-mt6853-devs/android_vendor_xiaomi_cannon"
-                   path="vendor/xiaomi"
+                   path="vendor/xiaomi/cannon"
                    remote="github"
                    revision="lineage-20"
                    clone-depth="1" />
