@@ -23,7 +23,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
+        sudo apt-get install -y git-core gnupg ccache flex bison build-essential zip curl \
           zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 libncurses5-dev \
           x11proto-core-dev libx11-dev libreadline-dev libxml2-dev \
           libglx-mesa0 libglu1-mesa libxi6 libssl-dev bc imagemagick openjdk-11-jdk \
