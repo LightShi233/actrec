@@ -1,24 +1,33 @@
+# .github/workflows/guacamole-desktop.yml
+
 name: Temporary Guacamole Desktop via Tailscale (4-Hour Session)
 
 on:
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   guacamole-desktop:
     runs-on: ubuntu-latest
     steps:
-      # 步骤 1: 检出代码 (可选)
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 步骤 2: 安装并配置 Tailscale
+      # 步骤 2: 使用 OAuth 客户端安装并配置 Tailscale
+      # 这是修改后的部分
       - name: Install Tailscale
         uses: tailscale/github-action@v2
         with:
-          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          # 使用新的 OAuth 凭证
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          # 定义此临时节点的标签，必须与 OAuth 客户端的标签匹配
+          # 并且需要提前在 Tailscale 的 ACL 策略中注册
+          tags: tag:ci 
+          # 主机名仍然可以自定义
           hostname: guacamole-github-runner
 
-      # 步骤 3: 安装并运行 Apache Guacamole
+      # ... (后面的步骤保持不变) ...
+
       - name: Run Apache Guacamole with Docker
         run: |
           GUAC_USER="admin"
@@ -32,7 +41,6 @@ jobs:
           echo "Waiting for Guacamole to become accessible..."
           sleep 30
 
-      # 步骤 4: 设置 RDP 连接 (连接到 Runner 自身)
       - name: Setup Desktop Environment (XFCE) and RDP Server
         run: |
           echo "Installing XFCE desktop and XRDP server..."
@@ -47,9 +55,6 @@ jobs:
           echo "runneruser:${{ secrets.RDP_PASSWORD }}" | sudo chpasswd
           echo "Desktop environment and RDP server are ready."
 
-      # 步骤 5: 保持 Workflow 运行 4 小时
-      # 使用 sleep 命令来精确控制运行时长。
-      # 4 小时 = 4 * 60 分钟 * 60 秒 = 14400 秒
       - name: Keep workflow alive for 4 hours
         run: |
           echo "✅ Setup complete!"
@@ -57,16 +62,7 @@ jobs:
           echo "-----------------------------------------------------"
           echo "Tailscale Hostname: guacamole-github-runner"
           echo "Guacamole URL: http://guacamole-github-runner:8080/guacamole"
-          echo "Guacamole User: admin"
-          echo "Guacamole Password: (from your GUACAMOLE_PASSWORD secret)"
-          echo "-----------------------------------------------------"
-          echo "To connect via RDP from Guacamole:"
-          echo "  - Hostname: localhost"
-          echo "  - Port: 3389"
-          echo "  - Username: runneruser"
-          echo "  - Password: (from your RDP_PASSWORD secret)"
+          # ... (省略其余 echo 信息) ...
           echo "-----------------------------------------------------"
           echo "This job will automatically stop and destroy all data in 4 hours."
-          echo "You can also stop it manually by cancelling the workflow."
-          sleep 14400 # 保持运行 4 小时
-
+          sleep 14400
