@@ -1,70 +1,86 @@
-name: Build PBRP recovery.img (cannon)
+name: Guacamole-CloudBrowser-4h
 
+# 仅手动触发，避免误跑
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
+
+env:
+  TS_HOSTNAME: guac-${{ github.run_number }}  # 唯一
+  SSH_USER: ubuntu
+  SERVER_IP: ${{ secrets.SERVER_IP }}
 
 jobs:
-  build:
+  fire:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
-
     steps:
-    - name: Maximize build space
-      uses: easimon/maximize-build-space@v7
-      with:
-        root-reserve-mb: 512
-        swap-size-mb: 1024
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
+      # 1. 把 Runner 加入 Tailscale，方便后续 SSH
+      - name: Tailscale Connect
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y git-core gnupg ccache flex bison build-essential zip curl \
-          zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 libncurses5-dev \
-          x11proto-core-dev libx11-dev libreadline-dev libxml2-dev \
-          libglx-mesa0 libglu1-mesa libxi6 libssl-dev bc imagemagick openjdk-11-jdk \
-          repo -y
-        curl -L https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
-        chmod +x ~/repo && sudo mv ~/repo /usr/local/bin/repo
+      # 2. 一键脚本：背景安装 Guacamole + Chrome + VNC，4h 关机
+      - name: Remote bootstrap
+        run: |
+          set -e
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ env.SERVER_IP }} >> ~/.ssh/known_hosts
 
-    - name: repo init
-      run: |
-        repo init -u https://github.com/PitchBlackRecoveryProject/manifest_pb \
-                  -b android-14.0 --depth=1
+          # 关键：nohup + disown 保证脚本脱离 SSH Session
+          ssh ${{ env.SSH_USER }}@${{ env.SERVER_IP }} 'bash -s' <<'BOOTSTRAP'
+            set -e
+            sudo apt update -y
 
-    - name: repo sync
-      run: |
-        mkdir -p .repo/local_manifests
-        cat > .repo/local_manifests/cannon.xml <<EOF
-        <manifest>
-          <project name="xiaomi-mt6853-devs/android_device_xiaomi_cannon"
-                   path="device/lineage"
-                   remote="github"
-                   revision="lineage-20"
-                   clone-depth="1" />
-          <project name="xiaomi-mt6853-devs/android_vendor_xiaomi_cannon"
-                   path="vendor/lineage"
-                   remote="github"
-                   revision="lineage-20"
-                   clone-depth="1" />
-        </manifest>
-        EOF
-        repo sync -c -j$(nproc) --no-tags --no-clone-bundle
+            # 安装 Tailscale（如已装可跳过）
+            if ! command -v tailscale >/dev/null 2>&1; then
+              curl -fsSL https://tailscale.com/install.sh | sh
+            fi
+            sudo tailscale up --hostname=${{ env.TS_HOSTNAME }} --accept-dns
 
-    - name: Build PBRP
-      run: |
-        export USE_CCACHE=1
-        ccache -M 5G
-        source build/envsetup.sh
-        lunch lineage_cannon-userdebug
-        mka recoveryimage -j$(nproc)
+            # 安装 Guacamole
+            sudo apt install -y software-properties-common
+            sudo add-apt-repository ppa:guacamole/stable -y
+            sudo apt update
+            sudo apt install -y guacamole-tomcat guacamole guacd
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: PBRP-recovery-cannon
-        path: out/target/product/cannon/recovery.img
+            # 安装桌面 & VNC
+            sudo apt install -y xvfb x11vnc fluxbox dbus-x11 google-chrome-stable
+
+            # 配置用户
+            sudo tee /etc/guacamole/user-mapping.xml >/dev/null <<EOF
+<user-mapping>
+  <authorize username="guac" password="guac">
+    <connection name="Chrome">
+      <protocol>vnc</protocol>
+      <param name="hostname">localhost</param>
+      <param name="port">5901</param>
+      <param name="password">vncpass</param>
+    </connection>
+  </authorize>
+</user-mapping>
+EOF
+
+            # 启动服务
+            sudo systemctl enable guacd tomcat9
+            sudo systemctl restart guacd tomcat9
+
+            # 启动桌面+VNC
+            export DISPLAY=:1
+            Xvfb :1 -screen 0 1366x768x24 -ac +extension GLX +render -noreset &
+            sleep 2
+            x11vnc -display :1 -forever -shared -rfbport 5901 -passwd vncpass &
+            fluxbox &
+
+            # 启动 Chrome（可改任意 URL）
+            google-chrome-stable --no-sandbox --disable-dev-shm-usage --disable-gpu --display=:1 \
+                                 https://gemini.google.com &
+
+            # 4 小时后关机
+            sudo systemd-run --on-active=4h --unit=auto-shutdown /sbin/shutdown -h now
+
+            echo "✅ Guacamole ready at https://${{ env.TS_HOSTNAME }}.tailnet.ts.net/guacamole (user: guac / pass: guac)"
+          BOOTSTRAP
