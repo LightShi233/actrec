@@ -1,80 +1,35 @@
-name: Cloud-Guacamole-4h
-
-# 仅手动触发
-on:
-  workflow_dispatch:
+name: guac-4h
+on: workflow_dispatch
 
 env:
-  TS_HOSTNAME: guac-${{ github.run_number }}
-  SSH_USER: ubuntu
   SERVER_IP: ${{ secrets.SERVER_IP }}
+  SSH_USER: ubuntu
 
 jobs:
   launch:
     runs-on: ubuntu-latest
     steps:
-      # 1. Runner 接入 Tailscale
-      - name: Tailscale Connect
-        uses: tailscale/github-action@v2
+      - uses: tailscale/github-action@v2
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      # 2. 把一次性脚本推到云主机后台执行
-      - name: Bootstrap remote host
+      - name: bootstrap
         run: |
-          set -e
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H "$SERVER_IP" >> ~/.ssh/known_hosts
-
-          ssh "$SSH_USER@$SERVER_IP" 'bash -s' <<'BOOTSTRAP'
-            set -e
+          ssh "$SSH_USER@$SERVER_IP" 'bash -s' <<'BOOT'
             sudo apt-get update -y
-
-            # 安装 Tailscale（若已装可跳过）
-            if ! command -v tailscale >/dev/null 2>&1; then
-              curl -fsSL https://tailscale.com/install.sh | sh
-            fi
-            sudo tailscale up --hostname="$TS_HOSTNAME" --accept-dns
-
-            # 安装 Guacamole + 桌面 + VNC
-            sudo apt-get install -y software-properties-common
-            sudo add-apt-repository ppa:guacamole/stable -y
-            sudo apt-get update
-            sudo apt-get install -y guacamole-tomcat guacamole guacd \
-                                    xvfb x11vnc fluxbox dbus-x11 google-chrome-stable
-
-            # 配置 Guacamole 用户/连接
-            sudo tee /etc/guacamole/user-mapping.xml >/dev/null <<EOF
-<user-mapping>
-  <authorize username="guac" password="guac">
-    <connection name="Chrome">
-      <protocol>vnc</protocol>
-      <param name="hostname">localhost</param>
-      <param name="port">5901</param>
-      <param name="password">vncpass</param>
-    </connection>
-  </authorize>
-</user-mapping>
-EOF
-
-            # 启动服务
-            sudo systemctl enable --now guacd tomcat9
-
-            # 启动桌面 + VNC + Chrome
+            sudo apt-get install -y xvfb x11vnc fluxbox google-chrome-stable
             export DISPLAY=:1
             Xvfb :1 -screen 0 1366x768x24 -ac +extension GLX +render -noreset &
             sleep 2
             x11vnc -display :1 -forever -shared -rfbport 5901 -passwd vncpass &
             fluxbox &
-            google-chrome-stable --no-sandbox --disable-dev-shm-usage --disable-gpu --display=:1 \
-                                 https://gemini.google.com &
-
-            # 4 小时后自动关机
+            google-chrome-stable --no-sandbox --disable-dev-shm-usage --display=:1 https://gemini.google.com &
             sudo systemd-run --on-active=4h --unit=auto-shutdown /sbin/shutdown -h now
-
-            echo "✅ Guacamole ready at https://$TS_HOSTNAME.tailnet.ts.net/guacamole  (user: guac / pass: guac)"
-          BOOTSTRAP
+            echo "✅ ready at vnc://$SERVER_IP:5901"
+BOOT
