@@ -1,35 +1,72 @@
-name: guac-4h
-on: workflow_dispatch
+name: Temporary Guacamole Desktop via Tailscale (4-Hour Session)
 
-env:
-  SERVER_IP: ${{ secrets.SERVER_IP }}
-  SSH_USER: ubuntu
+on:
+  workflow_dispatch: # 允许手动触发
 
 jobs:
-  launch:
+  guacamole-desktop:
     runs-on: ubuntu-latest
     steps:
-      - uses: tailscale/github-action@v2
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci
+      # 步骤 1: 检出代码 (可选)
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: bootstrap
+      # 步骤 2: 安装并配置 Tailscale
+      - name: Install Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: guacamole-github-runner
+
+      # 步骤 3: 安装并运行 Apache Guacamole
+      - name: Run Apache Guacamole with Docker
         run: |
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H "$SERVER_IP" >> ~/.ssh/known_hosts
-          ssh "$SSH_USER@$SERVER_IP" 'bash -s' <<'BOOT'
-            sudo apt-get update -y
-            sudo apt-get install -y xvfb x11vnc fluxbox google-chrome-stable
-            export DISPLAY=:1
-            Xvfb :1 -screen 0 1366x768x24 -ac +extension GLX +render -noreset &
-            sleep 2
-            x11vnc -display :1 -forever -shared -rfbport 5901 -passwd vncpass &
-            fluxbox &
-            google-chrome-stable --no-sandbox --disable-dev-shm-usage --display=:1 https://gemini.google.com &
-            sudo systemd-run --on-active=4h --unit=auto-shutdown /sbin/shutdown -h now
-            echo "✅ ready at vnc://$SERVER_IP:5901"
-BOOT
+          GUAC_USER="admin"
+          GUAC_PASSWORD="${{ secrets.GUACAMOLE_PASSWORD }}"
+          docker run --rm -d --name guacamole \
+            -e GUACD_HOSTNAME=localhost \
+            -e GUACAMOLE_ADMIN_PASSWORD="${GUAC_PASSWORD}" \
+            -e GUACAMOLE_ADMIN_USER="${GUAC_USER}" \
+            -p 8080:8080 \
+            guacamole/guacamole
+          echo "Waiting for Guacamole to become accessible..."
+          sleep 30
+
+      # 步骤 4: 设置 RDP 连接 (连接到 Runner 自身)
+      - name: Setup Desktop Environment (XFCE) and RDP Server
+        run: |
+          echo "Installing XFCE desktop and XRDP server..."
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            xfce4 \
+            xrdp \
+            firefox \
+            dbus-x11
+          sudo systemctl enable xrdp
+          sudo systemctl restart xrdp
+          echo "runneruser:${{ secrets.RDP_PASSWORD }}" | sudo chpasswd
+          echo "Desktop environment and RDP server are ready."
+
+      # 步骤 5: 保持 Workflow 运行 4 小时
+      # 使用 sleep 命令来精确控制运行时长。
+      # 4 小时 = 4 * 60 分钟 * 60 秒 = 14400 秒
+      - name: Keep workflow alive for 4 hours
+        run: |
+          echo "✅ Setup complete!"
+          echo "You can now connect to this machine via Tailscale."
+          echo "-----------------------------------------------------"
+          echo "Tailscale Hostname: guacamole-github-runner"
+          echo "Guacamole URL: http://guacamole-github-runner:8080/guacamole"
+          echo "Guacamole User: admin"
+          echo "Guacamole Password: (from your GUACAMOLE_PASSWORD secret)"
+          echo "-----------------------------------------------------"
+          echo "To connect via RDP from Guacamole:"
+          echo "  - Hostname: localhost"
+          echo "  - Port: 3389"
+          echo "  - Username: runneruser"
+          echo "  - Password: (from your RDP_PASSWORD secret)"
+          echo "-----------------------------------------------------"
+          echo "This job will automatically stop and destroy all data in 4 hours."
+          echo "You can also stop it manually by cancelling the workflow."
+          sleep 14400 # 保持运行 4 小时
+
