@@ -1,19 +1,19 @@
-name: Guacamole-CloudBrowser-4h
+name: Cloud-Guacamole-4h
 
-# 仅手动触发，避免误跑
+# 仅手动触发
 on:
   workflow_dispatch:
 
 env:
-  TS_HOSTNAME: guac-${{ github.run_number }}  # 唯一
+  TS_HOSTNAME: guac-${{ github.run_number }}
   SSH_USER: ubuntu
   SERVER_IP: ${{ secrets.SERVER_IP }}
 
 jobs:
-  fire:
+  launch:
     runs-on: ubuntu-latest
     steps:
-      # 1. 把 Runner 加入 Tailscale，方便后续 SSH
+      # 1. Runner 接入 Tailscale
       - name: Tailscale Connect
         uses: tailscale/github-action@v2
         with:
@@ -21,36 +21,33 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      # 2. 一键脚本：背景安装 Guacamole + Chrome + VNC，4h 关机
-      - name: Remote bootstrap
+      # 2. 把一次性脚本推到云主机后台执行
+      - name: Bootstrap remote host
         run: |
           set -e
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ env.SERVER_IP }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$SERVER_IP" >> ~/.ssh/known_hosts
 
-          # 关键：nohup + disown 保证脚本脱离 SSH Session
-          ssh ${{ env.SSH_USER }}@${{ env.SERVER_IP }} 'bash -s' <<'BOOTSTRAP'
+          ssh "$SSH_USER@$SERVER_IP" 'bash -s' <<'BOOTSTRAP'
             set -e
-            sudo apt update -y
+            sudo apt-get update -y
 
-            # 安装 Tailscale（如已装可跳过）
+            # 安装 Tailscale（若已装可跳过）
             if ! command -v tailscale >/dev/null 2>&1; then
               curl -fsSL https://tailscale.com/install.sh | sh
             fi
-            sudo tailscale up --hostname=${{ env.TS_HOSTNAME }} --accept-dns
+            sudo tailscale up --hostname="$TS_HOSTNAME" --accept-dns
 
-            # 安装 Guacamole
-            sudo apt install -y software-properties-common
+            # 安装 Guacamole + 桌面 + VNC
+            sudo apt-get install -y software-properties-common
             sudo add-apt-repository ppa:guacamole/stable -y
-            sudo apt update
-            sudo apt install -y guacamole-tomcat guacamole guacd
+            sudo apt-get update
+            sudo apt-get install -y guacamole-tomcat guacamole guacd \
+                                    xvfb x11vnc fluxbox dbus-x11 google-chrome-stable
 
-            # 安装桌面 & VNC
-            sudo apt install -y xvfb x11vnc fluxbox dbus-x11 google-chrome-stable
-
-            # 配置用户
+            # 配置 Guacamole 用户/连接
             sudo tee /etc/guacamole/user-mapping.xml >/dev/null <<EOF
 <user-mapping>
   <authorize username="guac" password="guac">
@@ -65,22 +62,19 @@ jobs:
 EOF
 
             # 启动服务
-            sudo systemctl enable guacd tomcat9
-            sudo systemctl restart guacd tomcat9
+            sudo systemctl enable --now guacd tomcat9
 
-            # 启动桌面+VNC
+            # 启动桌面 + VNC + Chrome
             export DISPLAY=:1
             Xvfb :1 -screen 0 1366x768x24 -ac +extension GLX +render -noreset &
             sleep 2
             x11vnc -display :1 -forever -shared -rfbport 5901 -passwd vncpass &
             fluxbox &
-
-            # 启动 Chrome（可改任意 URL）
             google-chrome-stable --no-sandbox --disable-dev-shm-usage --disable-gpu --display=:1 \
                                  https://gemini.google.com &
 
-            # 4 小时后关机
+            # 4 小时后自动关机
             sudo systemd-run --on-active=4h --unit=auto-shutdown /sbin/shutdown -h now
 
-            echo "✅ Guacamole ready at https://${{ env.TS_HOSTNAME }}.tailnet.ts.net/guacamole (user: guac / pass: guac)"
+            echo "✅ Guacamole ready at https://$TS_HOSTNAME.tailnet.ts.net/guacamole  (user: guac / pass: guac)"
           BOOTSTRAP
